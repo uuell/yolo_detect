@@ -131,6 +131,7 @@ img_count = 0
 
 coffee_beans_count = 0
 mold_count = 0
+object_count = 0
 
 # Servo position settings
 SERVO_POSITION_GOOD = -1.0
@@ -145,8 +146,6 @@ if SERVO_ENABLED:
 # ==============================
 while True:
     t_start = time.perf_counter()
-    coffee_beans_count = 0
-    mold_count = 0
     mold_detected_in_frame = False
     good_bean_detected_in_frame = False
 
@@ -172,7 +171,6 @@ while True:
 
     results = model(frame, verbose=False)
     detections = results[0].boxes
-    object_count = 0
 
     for i in range(len(detections)):
         xyxy = detections[i].xyxy.cpu().numpy().squeeze()
@@ -181,7 +179,7 @@ while True:
         classname = labels[classidx]
         conf = detections[i].conf.item()
 
-        if conf > min_thresh:
+        if conf > float(min_thresh):
             if classname == 'coffee beans':
                 good_bean_detected_in_frame = True
                 coffee_beans_count += 1
@@ -202,20 +200,20 @@ while True:
         if mold_detected_in_frame:
             servo.value = SERVO_POSITION_MOLD
             cv2.putText(frame, 'SERVO: MOLD (DISCARD)', (10, 100), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,0,255), 2)
-            time.sleep(0.5)
+            time.sleep(1.5)
             servo.value = SERVO_POSITION_NEUTRAL
         elif good_bean_detected_in_frame:
             servo.value = SERVO_POSITION_GOOD
-            cv2.putText(frame, 'SERVO: GOOD (KEEP)', (10, 100), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,0), 2)
-            time.sleep(0.5)
+            cv2.putText(frame, 'SERVO: GOOD (KEEP)', (10, 120), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,0), 2)
+            time.sleep(1.5)
             servo.value = SERVO_POSITION_NEUTRAL
 
     # ==============================
     # Display Info
     # ==============================
     cv2.putText(frame, f'Total Beans: {coffee_beans_count}', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,255), 2)
-    cv2.putText(frame, f'Mold Count: {mold_count}', (10, 70), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,0,255), 2)
-    cv2.putText(frame, f'Objects: {object_count}', (10, 130), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,255), 2)
+    cv2.putText(frame, f'Mold Count: {mold_count}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,0,255), 2)
+    cv2.putText(frame, f'Objects: {object_count}', (10, 80), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,255), 2)
 
     if source_type in ['video', 'usb', 'picamera']:
         cv2.putText(frame, f'FPS: {avg_frame_rate:.2f}', (10, 20), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,255), 2)
