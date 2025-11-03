@@ -14,17 +14,17 @@ from time import sleep
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', help='Path to YOLO model file (example: "runs/detect/train/weights/best.pt")',
-                    required=True)
+                     required=True)
 parser.add_argument('--source', help='Image source, can be image file ("test.jpg"), \
-                    image folder ("test_dir"), video file ("testvid.mp4"), index of USB camera ("usb0"), or index of Picamera ("picamera0")', 
-                    required=True)
+                     image folder ("test_dir"), video file ("testvid.mp4"), index of USB camera ("usb0"), or index of Picamera ("picamera0")', 
+                     required=True)
 parser.add_argument('--thresh', help='Minimum confidence threshold for displaying detected objects (example: "0.4")',
-                    default=0.5)
+                     default=0.5)
 parser.add_argument('--resolution', help='Resolution in WxH to display inference results at (example: "640x480"), \
-                    otherwise, match source resolution',
-                    default=None)
+                     otherwise, match source resolution',
+                     default=None)
 parser.add_argument('--record', help='Record results from video or webcam and save it as "demo1.avi". Must specify --resolution argument to record.',
-                    action='store_true')
+                     action='store_true')
 
 args = parser.parse_args()
 
@@ -125,7 +125,7 @@ elif source_type == 'picamera':
 
 # Set bounding box colors (using the Tableu 10 color scheme)
 bbox_colors = [(164,120,87), (68,148,228), (93,97,209), (178,182,133), (88,159,106), 
-              (96,202,231), (159,124,168), (169,162,241), (98,118,150), (172,176,184)]
+               (96,202,231), (159,124,168), (169,162,241), (98,118,150), (172,176,184)]
 
 # Initialize control and status variables
 avg_frame_rate = 0
@@ -133,13 +133,19 @@ frame_rate_buffer = []
 fps_avg_len = 200
 img_count = 0
 
+# --- FRAME SKIPPING VARIABLES (NEW) ---
+FRAME_COUNTER = 0
+# Adjust this value: 1 = scan every frame, 5 = scan every 5th frame, etc.
+FRAME_SKIP = 5 
+# --- END NEW VARIABLES ---
+
 # Begin inference loop
 while True:
 
     t_start = time.perf_counter()
 
     # Load frame from image source
-    if source_type == 'image' or source_type == 'folder': # If source is image or image folder, load the image using its filename
+    if source_type == 'image' or source_type == 'folder': 
         if img_count >= len(imgs_list):
             print('All images have been processed. Exiting program.')
             sys.exit(0)
@@ -147,19 +153,19 @@ while True:
         frame = cv2.imread(img_filename)
         img_count = img_count + 1
     
-    elif source_type == 'video': # If source is a video, load next frame from video file
+    elif source_type == 'video':
         ret, frame = cap.read()
         if not ret:
             print('Reached end of the video file. Exiting program.')
             break
     
-    elif source_type == 'usb': # If source is a USB camera, grab frame from camera
+    elif source_type == 'usb':
         ret, frame = cap.read()
         if (frame is None) or (not ret):
             print('Unable to read frames from the camera. This indicates the camera is disconnected or not working. Exiting program.')
             break
 
-    elif source_type == 'picamera': # If source is a Picamera, grab frames using picamera interface
+    elif source_type == 'picamera':
         frame = cap.capture_array()
         if (frame is None):
             print('Unable to read frames from the Picamera. This indicates the camera is disconnected or not working. Exiting program.')
@@ -169,84 +175,94 @@ while True:
     if resize == True:
         frame = cv2.resize(frame,(resW,resH))
 
-    # Run inference on frame
-    results = model(frame, verbose=False)
+    # --- FRAME SKIPPING LOGIC (NEW) ---
+    FRAME_COUNTER += 1
+    run_inference = (FRAME_COUNTER % FRAME_SKIP == 0)
 
-    # Extract results
-    detections = results[0].boxes
+    if run_inference:
+        # Reset counter
+        FRAME_COUNTER = 0
 
-    # Initialize variable for basic object counting example
-    object_count = 0
-    good_beans_count = 0
-    bad_beans_count = 0
+        # Run inference on frame
+        results = model(frame, verbose=False)
+
+        # Extract results
+        detections = results[0].boxes
+
+        # Initialize variable for basic object counting example
+        object_count = 0
+        good_beans_count = 0
+        bad_beans_count = 0
+        
+        # Initialize Servo position settings
+        servo_position_good = -1.0
+        servo_position_mold = 1.0
+        servo_position_neutral = 0.0
+        
+        # Initialize bean status
+        good_bean_detected_in_frame = False
+        mold_detected_in_frame = False
+
+        # Go through each detection and get bbox coords, confidence, and class
+        for i in range(len(detections)):
+
+            # Get bounding box coordinates
+            xyxy_tensor = detections[i].xyxy.cpu() # Detections in Tensor format in CPU memory
+            xyxy = xyxy_tensor.numpy().squeeze() # Convert tensors to Numpy array
+            xmin, ymin, xmax, ymax = xyxy.astype(int) # Extract individual coordinates and convert to int
+
+            # Get bounding box class ID and name
+            classidx = int(detections[i].cls.item())
+            classname = labels[classidx]
+
+            # Get bounding box confidence
+            conf = detections[i].conf.item()
+
+            # Draw box if confidence threshold is high enough
+            if conf > float(min_thresh):
+                # Only run the complex logic/servo control if we're running inference
+                print(classname)
+                if classname == 'coffee-beans':
+                    good_bean_detected_in_frame = True
+                    good_beans_count += 1
+                    print("good bean detected")
+                elif classname == 'coffee-bean mold':
+                    mold_detected_in_frame = True
+                    bad_beans_count += 1
+                    print("bad bean detected")
+
+                color = bbox_colors[classidx % 10]
+                cv2.rectangle(frame, (xmin,ymin), (xmax,ymax), color, 2)
+
+                label = f'{classname}: {int(conf*100)}%'
+                labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1) 
+                label_ymin = max(ymin, labelSize[1] + 10) 
+                cv2.rectangle(frame, (xmin, label_ymin-labelSize[1]-10), (xmin+labelSize[0], label_ymin+baseLine-10), color, cv2.FILLED) 
+                cv2.putText(frame, label, (xmin, label_ymin-7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1) 
+
+                object_count = object_count + 1
+        
+        ### Servo Logic (ONLY runs when inference is run)
+        if servo_enabled:
+            if good_bean_detected_in_frame:
+                servo.value = servo_position_good
+                time.sleep(1.5)
+                servo.value = servo_position_neutral
+            elif mold_detected_in_frame:
+                servo.value = servo_position_mold
+                time.sleep(1.5)
+                servo.value = servo_position_neutral
     
-    # Initialize Servo position settings
-    servo_position_good = -1.0
-    servo_position_mold = 1.0
-    servo_position_neutral = 0.0
-    
-    # Initialize bean status
-    good_bean_detected_in_frame = False
-    mold_detected_in_frame = False
-
-    # Go through each detection and get bbox coords, confidence, and class
-    for i in range(len(detections)):
-
-        # Get bounding box coordinates
-        # Ultralytics returns results in Tensor format, which have to be converted to a regular Python array
-        xyxy_tensor = detections[i].xyxy.cpu() # Detections in Tensor format in CPU memory
-        xyxy = xyxy_tensor.numpy().squeeze() # Convert tensors to Numpy array
-        xmin, ymin, xmax, ymax = xyxy.astype(int) # Extract individual coordinates and convert to int
-
-        # Get bounding box class ID and name
-        classidx = int(detections[i].cls.item())
-        classname = labels[classidx]
-
-        # Get bounding box confidence
-        conf = detections[i].conf.item()
-
-        # Draw box if confidence threshold is high enough
-        if conf > float(min_thresh):
-            print(classname)
-            if classname == 'coffee-beans':
-                good_bean_detected_in_frame = True
-                good_beans_count += 1
-                print("good bean detected")
-            elif classname == 'coffee-bean mold':
-                mold_detected_in_frame = True
-                bad_beans_count += 1
-                print("bad bean detected")
-
-            color = bbox_colors[classidx % 10]
-            cv2.rectangle(frame, (xmin,ymin), (xmax,ymax), color, 2)
-
-            label = f'{classname}: {int(conf*100)}%'
-            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1) # Get font size
-            label_ymin = max(ymin, labelSize[1] + 10) # Make sure not to draw label too close to top of window
-            cv2.rectangle(frame, (xmin, label_ymin-labelSize[1]-10), (xmin+labelSize[0], label_ymin+baseLine-10), color, cv2.FILLED) # Draw white box to put label text in
-            cv2.putText(frame, label, (xmin, label_ymin-7), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1) # Draw label text
-
-            # Basic example: count the number of objects in the image
-            object_count = object_count + 1
-    
-    ### Servo Logic
-    if servo_enabled:
-        if good_bean_detected_in_frame:
-            servo.value = servo_position_good
-            time.sleep(1.5)
-            servo.value = servo_position_neutral
-        elif mold_detected_in_frame:
-            servo.value = servo_position_mold
-            time.sleep(1.5)
-            servo.value = servo_position_neutral
+    # --- END FRAME SKIPPING LOGIC ---
 
     # Calculate and draw framerate (if using video, USB, or Picamera source)
     if source_type == 'video' or source_type == 'usb' or source_type == 'picamera':
-        cv2.putText(frame, f'FPS: {avg_frame_rate:0.2f}', (10,20), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,255), 2) # Draw framerate
+        cv2.putText(frame, f'FPS: {avg_frame_rate:0.2f}', (10,20), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,255), 2) 
     
     # Display detection results
-    cv2.putText(frame, f'Beans Detected: {object_count}', (10,40), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,255), 2) # Draw total number of detected objects
-    cv2.imshow('YOLO detection results',frame) # Display image
+    # NOTE: object_count will only update when run_inference is True
+    cv2.putText(frame, f'Beans Detected: {object_count}', (10,40), cv2.FONT_HERSHEY_SIMPLEX, .7, (0,255,255), 2) 
+    cv2.imshow('YOLO detection results',frame)
     if record: recorder.write(frame)
 
     # If inferencing on individual images, wait for user keypress before moving to next image. Otherwise, wait 5ms before moving to next frame.
@@ -255,11 +271,11 @@ while True:
     elif source_type == 'video' or source_type == 'usb' or source_type == 'picamera':
         key = cv2.waitKey(5)
     
-    if key == ord('q') or key == ord('Q'): # Press 'q' to quit
+    if key == ord('q') or key == ord('Q'): 
         break
-    elif key == ord('s') or key == ord('S'): # Press 's' to pause inference
+    elif key == ord('s') or key == ord('S'): 
         cv2.waitKey()
-    elif key == ord('p') or key == ord('P'): # Press 'p' to save a picture of results on this frame
+    elif key == ord('p') or key == ord('P'): 
         cv2.imwrite('capture.png',frame)
     
     # Calculate FPS for this frame
