@@ -1,0 +1,74 @@
+from gpiozero import Servo
+from gpiozero.pins.pigpio import PiGPIOFactory
+from time import sleep
+
+# Define the BCM pin number your servo's signal wire is connected to
+# We will use GPIO 17 (Physical Pin 11) as an example.
+# **IMPORTANT:** Change this to the GPIO pin you actually use.
+SERVO_PIN = 17
+
+# Initialize pigpio factory for better PWM control
+# This provides more accurate servo control than the default RPi.GPIO
+try:
+    factory = PiGPIOFactory()
+    print("Using pigpio for PWM control (recommended)")
+except:
+    factory = None
+    print("Warning: pigpio not available, using default pin factory")
+    print("For better control, install pigpio: sudo apt install pigpio python3-pigpio")
+    print("Then enable it: sudo systemctl enable pigpiod && sudo systemctl start pigpiod")
+
+# Initialize the Servo object with corrected pulse widths
+# Standard servo pulse widths are typically 1ms to 2ms
+# min_pulse_width and max_pulse_width are in SECONDS (not milliseconds)
+servo = Servo(
+    SERVO_PIN, 
+    min_pulse_width=1.0/1000,    # 1ms = 0.001 seconds
+    max_pulse_width=2.0/1000,    # 2ms = 0.002 seconds
+    pin_factory=factory
+)
+
+print(f"Servo initialized on GPIO {SERVO_PIN}. Press Ctrl+C to stop.")
+
+# --- INITIAL NEUTRAL MOVE ---
+print("Setting servo to NEUTRAL (Center, typically 90 degrees)...")
+servo.mid()  # Sets the servo value to 0.0 (neutral)
+sleep(2)     # Wait 2 seconds to ensure it reaches the starting position
+
+print("Starting sweep sequence...")
+# ----------------------------
+
+try:
+    while True:
+        # 1. Move to the LEFT position (minimum)
+        # Value = -1.0, typically 0 degrees
+        print("Moving to LEFT (Minimum position, typically 0 degrees)...")
+        servo.min() 
+        sleep(1.5)  # Wait for 1.5 seconds
+        
+        # 2. Move back to the NEUTRAL position (center)
+        # Value = 0.0, typically 90 degrees
+        print("Moving to NEUTRAL (Center position, typically 90 degrees)...")
+        servo.mid()
+        sleep(1.5)  # Wait for 1.5 seconds
+        
+        # 3. Move to the RIGHT position (maximum)
+        # Value = +1.0, typically 180 degrees
+        print("Moving to RIGHT (Maximum position, typically 180 degrees)...")
+        servo.max()
+        sleep(1.5)  # Wait for 1.5 seconds
+        
+        # 4. Move back to the NEUTRAL position (center)
+        # Value = 0.0, typically 90 degrees
+        print("Moving to NEUTRAL (Center position, typically 90 degrees)...")
+        servo.mid()
+        sleep(1.5)  # Wait for 1.5 seconds
+
+except KeyboardInterrupt:
+    print("\nProgram stopped by user.")
+    
+finally:
+    # Cleanup: detach servo and release GPIO
+    servo.value = None  # Stop sending PWM signals
+    servo.close()
+    print("GPIO cleanup complete.")
